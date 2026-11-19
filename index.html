@@ -137,6 +137,25 @@ body.fs-attiva { overflow:hidden; }
 .dp-esito .ora { display:block; color:var(--muted); font-size:11px; }
 .dp-esito .r { font-weight:600; }
 .dp-vuoto { color:var(--muted); font-size:12px; padding:8px; text-align:center; }
+
+/* ---------- barra aumento di livello / promemoria livello ---------- */
+#barra-livello { margin:8px auto 0; max-width:1100px; border:1px solid #e0cf9a; border-left:4px solid #b8860b;
+  background:#fdf6e3; border-radius:8px; padding:8px 10px; display:flex; align-items:center;
+  gap:10px; flex-wrap:wrap; font-size:13.5px; }
+#barra-livello[hidden] { display:none; }
+#barra-livello .bl-testo { flex:1; min-width:180px; color:#5b4a12; font-weight:600; }
+#barra-livello .bl-attesa { color:#8a6d1f; font-weight:600; }
+#barra-livello button { font:inherit; font-weight:600; padding:7px 14px; border-radius:7px;
+  border:1px solid #8a6d1f; background:#b8860b; color:#fff; cursor:pointer; }
+#barra-livello button:hover { background:#a1750a; }
+#nota-livello { margin:8px auto 0; max-width:1100px; border:1px solid #bcd8c8; border-left:4px solid var(--ok);
+  background:#eef7f1; border-radius:8px; padding:8px 10px; font-size:13.5px; }
+#nota-livello[hidden] { display:none; }
+#nota-livello .nl-testa { display:flex; align-items:center; gap:10px; margin-bottom:4px; }
+#nota-livello .nl-testa strong { flex:1; color:#1f5c39; }
+#nota-livello button { font:inherit; font-size:12px; padding:4px 10px; border-radius:6px;
+  border:1px solid #7aa892; background:#fff; color:#1f5c39; cursor:pointer; }
+#nota-livello .nl-testo { color:#2b3a33; white-space:pre-line; line-height:1.45; }
 @media print { header, .riga-bt, .bt, .banco { display:none !important; } body { background:#fff; } }
 </style>
 </head>
@@ -155,6 +174,15 @@ body.fs-attiva { overflow:hidden; }
   <div class="tabbar">
     <button type="button" class="tab attiva" data-tab="scheda">Scheda</button>
     <button type="button" class="tab" data-tab="extra">Extra</button>
+  </div>
+  <div id="barra-livello" hidden>
+    <span class="bl-testo"></span>
+    <span class="bl-attesa" hidden></span>
+    <button type="button" id="bl-btn">Aumento di Livello Disponibile</button>
+  </div>
+  <div id="nota-livello" hidden>
+    <div class="nl-testa"><strong>Nuovo livello</strong><button type="button" id="nl-chiudi">Chiudi</button></div>
+    <div class="nl-testo"></div>
   </div>
 </header>
 <main id="contenuto">
@@ -1002,6 +1030,8 @@ function baseRecord(pg) {
     ispirazione: 0,
     morte: { succ: 0, fall: 0 },
     slot: pg.incantesimi ? JSON.parse(JSON.stringify(pg.incantesimi.slot)) : {},
+    slotMax: pg.incantesimi ? JSON.parse(JSON.stringify(pg.incantesimi.slot)) : {},
+    richiestaLivello: null,
     inventario: (statoInventarioIniziale(pg)),
     monete: Object.assign({ MR: 0, MA: 0, ME: 0, MP: 0, MO: 0 }, pg.monete),
     stati: [],
@@ -1022,6 +1052,8 @@ function unisci(base, remoto) {
   r.stati = Array.isArray(remoto && remoto.stati) ? remoto.stati.slice() : (base.stati || []).slice();
   r.inventario = Array.isArray(remoto && remoto.inventario) ? remoto.inventario.slice() : base.inventario.slice();
   r.slot = Object.assign({}, base.slot, (remoto && remoto.slot) || {});
+  r.slotMax = Object.assign({}, base.slotMax, (remoto && remoto.slotMax) || {});
+  r.richiestaLivello = (remoto && remoto.richiestaLivello) || null;
   return r;
 }
 
@@ -1095,6 +1127,12 @@ function carAttuali() {
   return c;
 }
 function nomeAttuale() { return stato.nome || corrente.nome; }
+/* Numero massimo di slot per livello: pu\u00f2 essere aggiornato dal Master al level up. */
+function slotMaxAttuali() {
+  const s = stato.slotMax;
+  if (s && typeof s === 'object' && Object.keys(s).length) return s;
+  return corrente.incantesimi ? corrente.incantesimi.slot : {};
+}
 
 /* ===================== Vista "scheda immagine" ===================== */
 function campo(key, attrs, cls) {
@@ -1179,6 +1217,7 @@ function aggiornaCampi() {
     else if (k.indexOf('inv.') === 0) el.value = (stato.inventario[Number(k.slice(4))] || {}).nome || '';
   });
   aggiornaVoceElenco();
+  aggiornaLivello();
 }
 
 function applicaZoom() {
@@ -1293,8 +1332,9 @@ function renderExtra() {
       h += '<div class="d">Incantesimi preparati: ' + inc.preparati.map(esc).join(', ') + '</div>';
     }
     h += '<div class="d" style="margin-top:8px">Slot disponibili:</div>';
-    Object.keys(inc.slot).forEach(function (lv) {
-      const max = inc.slot[lv];
+    const slotMax = slotMaxAttuali();
+    Object.keys(slotMax).forEach(function (lv) {
+      const max = slotMax[lv];
       const usati = Number(stato.slot[lv]) || 0;
       h += '<div class="slot"><span style="font-size:13px;min-width:70px">' + lv + '\u00b0 livello</span>';
       for (let i = 0; i < max; i++) h += '<span class="pip' + (i < usati ? ' speso' : '') + '" data-slot="' + lv + '" data-i="' + i + '"></span>';
@@ -1355,7 +1395,7 @@ function aggiornaExtra() {
   const attivo = document.activeElement;
   elExtra.querySelectorAll('[data-slot]').forEach(function (p) {
     const lv = p.getAttribute('data-slot');
-    const max = corrente.incantesimi.slot[lv];
+    const max = slotMaxAttuali()[lv];
     const usati = Number(stato.slot[lv]) || 0;
     const i = Number(p.getAttribute('data-i'));
     p.classList.toggle('speso', i < usati);
@@ -1386,7 +1426,91 @@ function renderColpire() {
   }).join('');
 }
 
-function render() { renderScheda(); renderColpire(); renderExtra(); }
+/* ===================== Barra aumento di livello =====================
+   La soglia dei PE \u00e8 controllata dal Master: quando viene raggiunta compare qui il
+   pulsante "Aumento di Livello Disponibile". Premendolo si invia la richiesta al Master,
+   che deve approvarla; all'approvazione la scheda riceve livello, PF, CA, caratteristiche,
+   attacchi e slot aggiornati e mostra il promemoria dei nuovi privilegi/incantesimi. */
+const SOGLIE_PE = [0, 300, 900, 2700, 6500];
+const CHIAVE_LIVELLO_VISTO = 'phandelver-livello-visto-v1';
+const LIVELLO_INFO = {
+  'Guerriero umano (nobile)': {
+    2: 'Azione Impetuosa: nel tuo turno puoi effettuare un\u2019azione aggiuntiva oltre all\u2019azione regolare e a un\u2019eventuale azione bonus; si ricarica con un riposo breve o lungo.',
+    3: 'Critico Migliorato: i tuoi attacchi con un\u2019arma mettono a segno un colpo critico anche con un 19 al tiro.',
+    4: 'Aumento dei Punteggi di Caratteristica: la Forza sale a 18 (+4): aumentano attacco e danni delle armi basate su Forza, il modificatore del tiro salvezza su Forza e quello di Atletica.',
+    5: 'Attacco Extra: puoi effettuare due attacchi anzich\u00e9 uno. Inoltre il bonus di competenza sale a +3: +1 al tiro per colpire delle armi competenti e +1 a tiri salvezza e abilit\u00e0 competenti (e alla Percezione passiva).'
+  },
+  'Chierico nano (soldato)': {
+    2: 'Incanalare Divinit\u00e0: puoi incanalare energia divina (Scacciare Non Morti oppure Preservare Vita); recuperi l\u2019uso con un riposo breve o lungo.',
+    3: 'Ora prepari incantesimi di 2\u00b0 livello: scegline fino a 3 (i due di dominio \u2014 ristorare inferiore e arma spirituale \u2014 sono gi\u00e0 preparati). Slot aggiornati: 4 di 1\u00b0 e 2 di 2\u00b0 livello.',
+    4: 'Apprendi un nuovo trucchetto da chierico. La Saggezza sale a 18 (+4): aumentano la CD degli incantesimi e di Scacciare Non Morti, l\u2019attacco con incantesimo, i tiri salvezza su Saggezza e la Percezione passiva.',
+    5: 'Ora prepari incantesimi di 3\u00b0 livello: scegline fino a 4 (i due di dominio \u2014 faro di speranza e rinascita \u2014 sono gi\u00e0 preparati). Slot aggiornati: 4 di 1\u00b0, 3 di 2\u00b0 e 2 di 3\u00b0 livello.'
+  },
+  'Mago elfo (accolito)': {
+    2: 'Invocatore Sapiente e Plasmare Incantesimi: i privilegi della tua specializzazione di invocazione.',
+    3: 'Aggiungi 2 incantesimi di 2\u00b0 livello al tuo libro. Slot aggiornati: 4 di 1\u00b0 e 2 di 2\u00b0 livello.',
+    4: 'Apprendi un nuovo trucchetto da mago. L\u2019Intelligenza sale a 18 (+4): aumentano la CD degli incantesimi, l\u2019attacco con incantesimo e i tiri salvezza su Intelligenza.',
+    5: 'Aggiungi 2 incantesimi di 3\u00b0 livello al tuo libro. Slot aggiornati: 4 di 1\u00b0, 3 di 2\u00b0 e 2 di 3\u00b0 livello.'
+  },
+  'Guerriero umano (eroe popolare)': {
+    2: 'Azione Impetuosa: nel tuo turno puoi effettuare un\u2019azione aggiuntiva oltre all\u2019azione regolare e a un\u2019eventuale azione bonus; si ricarica con un riposo breve o lungo.',
+    3: 'Critico Migliorato: i tuoi attacchi con un\u2019arma mettono a segno un colpo critico anche con un 19 al tiro.',
+    4: 'Aumento dei Punteggi di Caratteristica: la Destrezza sale a 18 (+4): aumentano attacco e danni dell\u2019arco lungo, il modificatore del tiro salvezza su Destrezza, le abilit\u00e0 su Destrezza, la CA (+1 senza armatura pesante) e l\u2019iniziativa.',
+    5: 'Attacco Extra: puoi effettuare due attacchi anzich\u00e9 uno. Inoltre il bonus di competenza sale a +3: +1 al tiro per colpire delle armi competenti e +1 a tiri salvezza e abilit\u00e0 competenti (e alla Percezione passiva).'
+  }
+};
+
+function livelloVisti() {
+  try { return JSON.parse(localStorage.getItem(CHIAVE_LIVELLO_VISTO)) || {}; }
+  catch (e) { return {}; }
+}
+function salvaLivelloVisti(d) {
+  try { localStorage.setItem(CHIAVE_LIVELLO_VISTO, JSON.stringify(d)); } catch (e) { /* niente */ }
+}
+
+function aggiornaLivello() {
+  const barra = document.getElementById('barra-livello');
+  const nota = document.getElementById('nota-livello');
+  if (!barra || !nota) return;
+  const lv = livelloAttuale();
+  const pe = Number(stato.pe) || 0;
+  const rich = (stato.richiestaLivello && Number(stato.richiestaLivello.livello) > lv) ? stato.richiestaLivello : null;
+
+  /* promemoria dei privilegi quando il livello sale (approvazione del Master) */
+  const visti = livelloVisti();
+  if (visti[corrente.id] == null) {
+    visti[corrente.id] = lv; salvaLivelloVisti(visti);
+  } else if (lv > visti[corrente.id]) {
+    visti[corrente.id] = lv; salvaLivelloVisti(visti);
+    const info = (LIVELLO_INFO[corrente.nome] || {})[lv];
+    if (info) {
+      nota.querySelector('.nl-testa strong').textContent = 'Nuovo livello: ' + lv + '\u00b0';
+      nota.querySelector('.nl-testo').textContent = info;
+      nota.hidden = false;
+    }
+  }
+
+  const testo = barra.querySelector('.bl-testo');
+  const btn = document.getElementById('bl-btn');
+  const attesa = barra.querySelector('.bl-attesa');
+  if (rich) {
+    barra.hidden = false;
+    testo.hidden = true; btn.hidden = true;
+    attesa.hidden = false;
+    attesa.textContent = 'Aumento di livello in attesa di approvazione del Master (' + rich.livello + '\u00b0 livello).';
+  } else if (lv < SOGLIE_PE.length && pe >= SOGLIE_PE[lv]) {
+    barra.hidden = false;
+    testo.hidden = false; testo.textContent = 'Hai raggiunto i PE per salire al ' + (lv + 1) + '\u00b0 livello.';
+    btn.hidden = false;
+    attesa.hidden = true;
+  } else {
+    barra.hidden = true;
+  }
+  /* la barra sta nell'header: aggiorna l'altezza per far scendere il pannello dei tiri */
+  dpAggiornaAltezzaHeader();
+}
+
+function render() { renderScheda(); renderColpire(); renderExtra(); aggiornaLivello(); }
 
 /* ===================== Interazione ===================== */
 /* Listener sul documento: le tab stanno nell'header, fuori da #contenuto. */
@@ -1470,7 +1594,7 @@ document.addEventListener('click', function (e) {
   if (pipSlot) {
     const lv = pipSlot.getAttribute('data-slot');
     const i = Number(pipSlot.getAttribute('data-i'));
-    const max = corrente.incantesimi.slot[lv];
+    const max = slotMaxAttuali()[lv];
     let usati = Number(stato.slot[lv]) || 0;
     usati = (i < usati) ? i : (i + 1);
     stato.slot[lv] = Math.max(0, Math.min(max, usati));
@@ -1525,7 +1649,7 @@ elCont.addEventListener('input', function (e) {
   const c = t.getAttribute('data-campo');
   if (c === 'nome') { stato.nome = t.value; aggiornaVoceElenco(); inviaRitardato(); return; }
   if (c === 'nomeGiocatore') { stato.nomeGiocatore = t.value; inviaRitardato(); return; }
-  if (c === 'pe') { stato.pe = Math.max(0, Math.round(Number(t.value) || 0)); inviaRitardato(); return; }
+  if (c === 'pe') { stato.pe = Math.max(0, Math.round(Number(t.value) || 0)); aggiornaLivello(); inviaRitardato(); return; }
   if (c === 'ca') { stato.ca = Math.max(0, Math.round(Number(t.value) || 0) - bonusCa()); inviaRitardato(); return; }
   if (c === 'pfMax') { stato.pfMax = Math.max(1, Math.round(Number(t.value) || 1)); inviaRitardato(); return; }
   if (c === 'pf') { stato.pf = Math.max(0, Math.min(pfMaxAttuale(), Math.round(Number(t.value) || 0))); inviaRitardato(); return; }
@@ -1636,6 +1760,19 @@ window.addEventListener('beforeunload', function () { if (pronto) pubblica(); })
 
 /* pannello dei tiri: storico, toggle, altezza header */
 dpToggle.addEventListener('click', dpCicla);
+
+/* barra aumento di livello: richiesta al Master e chiusura del promemoria */
+document.getElementById('bl-btn').addEventListener('click', function () {
+  const lv = livelloAttuale();
+  if (lv >= SOGLIE_PE.length || (Number(stato.pe) || 0) < SOGLIE_PE[lv]) return;
+  stato.richiestaLivello = { livello: lv + 1, ts: Date.now() };
+  aggiornaLivello();
+  pubblica();
+});
+document.getElementById('nl-chiudi').addEventListener('click', function () {
+  document.getElementById('nota-livello').hidden = true;
+  dpAggiornaAltezzaHeader();
+});
 document.getElementById('dp-svuota').addEventListener('click', function () {
   if (!dpStorico.length) return;
   if (!confirm('Svuotare lo storico dei tiri?')) return;
