@@ -1708,10 +1708,17 @@ async function pubblica() {
   /* I PE, il livello e gli slot massimi sono decisi dal Master: rimanda il valore ricevuto
      invece di quello locale, cos\u00ec il salvataggio della scheda non li azzera. */
   const a = autorita[corrente.id];
+  const prima = cache[corrente.id];
   if (a) {
     payload.pe = a.pe;
     payload.livello = a.livello;
     if (a.slotMax) payload.slotMax = a.slotMax;
+  } else if (prima) {
+    /* Non abbiamo ancora visto una scrittura del Master: conserva comunque l'ultimo
+       valore noto dal server per non riportare a zero i PE con un salvataggio. */
+    if (prima.pe != null) payload.pe = prima.pe;
+    if (prima.livello != null) payload.livello = prima.livello;
+    if (prima.slotMax) payload.slotMax = prima.slotMax;
   }
   cache[corrente.id] = payload;
   impostaStato('salvataggio\u2026', '');
