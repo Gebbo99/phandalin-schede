@@ -88,6 +88,10 @@ body.fs-attiva { overflow:hidden; }
 .foglio .campo:focus { border-color:var(--accent); box-shadow:0 0 0 .35cqw rgba(47,111,143,.3); z-index:6; outline:none; }
 .c-nome { font-size:2.4cqw; text-align:left; padding-left:.4em; }
 .c-pe { font-size:1.9cqw; }
+.foglio .campo-fisso { position:absolute; display:flex; align-items:center; justify-content:center;
+  padding:0 .12em; border:.14cqw solid rgba(47,111,143,.55); background:#fff; color:#16202a;
+  border-radius:.4cqw; font-weight:700; line-height:1.05; overflow:hidden; }
+.c-liv { font-size:2.1cqw; }
 .c-ngioc { font-size:1.7cqw; text-align:left; padding-left:.4em; }
 .c-ca { font-size:2.7cqw; }
 .c-pfmax { font-size:1.8cqw; }
@@ -890,6 +894,15 @@ const MISURE = {
 };
 const COL_DANNO = [327.0, 389.1];
 const RIGHE_ATTACCO = [[392.1, 408.0], [412.5, 428.4], [433.2, 449.0]];
+/* Riquadro del livello accanto al nome della classe: copre il "1\u00b0" stampato nella scheda.
+   La posizione varia con la lunghezza del nome della classe, quindi una per scheda. */
+const LIVELLO_BOX = [
+  [315, 48, 331, 65],   // pg0 Guerriero
+  [308.5, 48, 324.5, 65],   // pg1 Chierico
+  [297, 48, 313, 65],   // pg2 Ladro
+  [297, 48, 313, 65],   // pg3 Mago
+  [315, 48, 331, 65]    // pg4 Guerriero
+];
 
 function pct(v, tot) { return (v / tot * 100).toFixed(3) + '%'; }
 function stilePt(r) {
@@ -1012,6 +1025,10 @@ const elZoomLiv = document.getElementById('zoom-liv');
 let corrente = PG[0];
 let stato = {};              // record corrente (unità base + dati condivisi)
 let cache = {};              // ultimo dato noto dal server per ogni id
+/* Campi di competenza del Master (PE, livello, slot massimi): la scheda non li scrive
+   mai di propria iniziativa, li riceve dal Master e li rimanda invariati per non
+   sovrascriverli quando salva il resto del record. */
+let autorita = {};           // { id: { pe, livello, slotMax } } come noti dal Master
 let invioTimer = null;
 let pronto = false;
 let zoom = 1;
@@ -1138,6 +1155,13 @@ function slotMaxAttuali() {
 function campo(key, attrs, cls) {
   return '<input class="campo ' + (cls || '') + '" style="' + stilePt(MISURE[key]) + '" ' + attrs + '>';
 }
+/* Riquadro in sola lettura (specchietto): non modificabile dai giocatori.
+   Usato per i PE e per il livello, di competenza del Master. */
+function campoFisso(key, testo, cls, box) {
+  const rect = box || MISURE[key];
+  return '<div class="campo-fisso ' + (cls || '') + '" data-fisso="' + key + '" style="' + stilePt(rect) + '">'
+    + esc(testo) + '</div>';
+}
 function pulsAdj(key, dest, d, titolo) {
   return '<button type="button" class="adj c-pf-adj" data-adj="' + dest + ':' + d + '" title="' + titolo
     + '" style="' + stilePt(MISURE[key]) + '">' + (d < 0 ? '\u2212' : '+') + '</button>';
@@ -1153,7 +1177,8 @@ function renderScheda() {
   let h = '';
   h += campo('nome', 'type="text" data-campo="nome" value="' + esc(nomeAttuale()) + '"', 'c-nome');
   h += campo('nomeGiocatore', 'type="text" data-campo="nomeGiocatore" value="' + esc(stato.nomeGiocatore || '') + '"', 'c-ngioc');
-  h += campo('pe', 'type="number" inputmode="numeric" data-campo="pe" value="' + (Number(stato.pe) || 0) + '"', 'c-pe');
+  h += campoFisso('pe', Number(stato.pe) || 0, 'c-pe');
+  h += campoFisso('liv', livelloAttuale() + '\u00b0', 'c-liv', LIVELLO_BOX[PG.indexOf(corrente)]);
   h += pallini('isp', 3);
   h += campo('ca', 'type="number" inputmode="numeric" data-campo="ca" value="' + caAttuale() + '"', 'c-ca');
   h += campo('pfMax', 'type="number" inputmode="numeric" data-campo="pfMax" value="' + pfMaxAttuale() + '"', 'c-pfmax');
@@ -1200,7 +1225,10 @@ function aggiornaCampi() {
   }
   set('[data-campo="nome"]', nomeAttuale());
   set('[data-campo="nomeGiocatore"]', stato.nomeGiocatore || '');
-  set('[data-campo="pe"]', Number(stato.pe) || 0);
+  const ePe = elCont.querySelector('[data-fisso="pe"]');
+  if (ePe) ePe.textContent = String(Number(stato.pe) || 0);
+  const eLiv = elCont.querySelector('[data-fisso="liv"]');
+  if (eLiv) eLiv.textContent = livelloAttuale() + '\u00b0';
   set('[data-campo="ca"]', caAttuale());
   set('[data-campo="pfMax"]', pfMaxAttuale());
   set('[data-campo="pf"]', pfAttuali());
@@ -1649,7 +1677,6 @@ elCont.addEventListener('input', function (e) {
   const c = t.getAttribute('data-campo');
   if (c === 'nome') { stato.nome = t.value; aggiornaVoceElenco(); inviaRitardato(); return; }
   if (c === 'nomeGiocatore') { stato.nomeGiocatore = t.value; inviaRitardato(); return; }
-  if (c === 'pe') { stato.pe = Math.max(0, Math.round(Number(t.value) || 0)); aggiornaLivello(); inviaRitardato(); return; }
   if (c === 'ca') { stato.ca = Math.max(0, Math.round(Number(t.value) || 0) - bonusCa()); inviaRitardato(); return; }
   if (c === 'pfMax') { stato.pfMax = Math.max(1, Math.round(Number(t.value) || 1)); inviaRitardato(); return; }
   if (c === 'pf') { stato.pf = Math.max(0, Math.min(pfMaxAttuale(), Math.round(Number(t.value) || 0))); inviaRitardato(); return; }
@@ -1665,9 +1692,27 @@ function inviaRitardato(ms) {
   invioTimer = setTimeout(pubblica, ms || 500);
 }
 
+/* Memorizza i valori di competenza del Master letti dal server (solo scritture del Master). */
+function registraAutorita(id, dati) {
+  if (!dati || String(dati.client || '').indexOf('dm-') !== 0) return;
+  autorita[id] = {
+    pe: Number(dati.pe) || 0,
+    livello: Number(dati.livello) || 1,
+    slotMax: (dati.slotMax && typeof dati.slotMax === 'object') ? dati.slotMax : null
+  };
+}
+
 async function pubblica() {
   if (!pronto) return;
   const payload = Object.assign({}, stato, { client: CLIENT_ID, ts: Date.now() });
+  /* I PE, il livello e gli slot massimi sono decisi dal Master: rimanda il valore ricevuto
+     invece di quello locale, cos\u00ec il salvataggio della scheda non li azzera. */
+  const a = autorita[corrente.id];
+  if (a) {
+    payload.pe = a.pe;
+    payload.livello = a.livello;
+    if (a.slotMax) payload.slotMax = a.slotMax;
+  }
   cache[corrente.id] = payload;
   impostaStato('salvataggio\u2026', '');
   const res = await sb.from(TABELLA).upsert({ id: corrente.id, dati: payload, updated_at: new Date().toISOString() });
@@ -1705,7 +1750,9 @@ async function carica() {
     avviso('Impossibile leggere le schede da Supabase: ' + res.error.message);
     pronto = true;
   } else {
-    (res.data || []).forEach(function (row) { if (row && row.dati) cache[row.id] = row.dati; });
+    (res.data || []).forEach(function (row) {
+      if (row && row.dati) { cache[row.id] = row.dati; registraAutorita(row.id, row.dati); }
+    });
     aggiornaElencoTutto();
     impostaStato('sincronizzato', 'ok');
     pronto = true;
@@ -1733,6 +1780,7 @@ function avviaRealtime() {
       const row = payload.new;
       if (!row || !row.id || !row.dati) return;
       if (row.dati.client === CLIENT_ID) return;      // eco del proprio salvataggio
+      registraAutorita(row.id, row.dati);
       const attivo = document.activeElement;
       const scrittura = attivo && (attivo.tagName === 'INPUT' || attivo.tagName === 'TEXTAREA' || attivo.tagName === 'SELECT');
       cache[row.id] = row.dati;
