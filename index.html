@@ -160,6 +160,22 @@ body.fs-attiva { overflow:hidden; }
 #nota-livello button { font:inherit; font-size:12px; padding:4px 10px; border-radius:6px;
   border:1px solid #7aa892; background:#fff; color:#1f5c39; cursor:pointer; }
 #nota-livello .nl-testo { color:#2b3a33; white-space:pre-line; line-height:1.45; }
+
+/* ---------- finestra delle scelte di level up ---------- */
+#modale-liv { position:fixed; inset:0; z-index:300; background:rgba(20,28,36,.5);
+  display:flex; align-items:flex-start; justify-content:center; padding:24px 12px; overflow:auto; }
+#modale-liv.nascosto { display:none; }
+#modale-liv .ml-box { background:#fff; border:1px solid var(--line); border-radius:10px;
+  max-width:560px; width:100%; padding:14px 16px; box-shadow:0 12px 40px rgba(0,0,0,.3); }
+#modale-liv h3 { margin:0 0 4px; font-size:16px; }
+#modale-liv h4 { margin:14px 0 6px; font-size:13px; text-transform:uppercase; letter-spacing:.05em; color:var(--muted); }
+#modale-liv .ml-nota { font-size:13px; color:#3a4650; margin:4px 0; line-height:1.45; }
+#modale-liv .ml-esito { font-weight:600; color:#1f5c39; margin-top:6px; font-size:14px; }
+#modale-liv .ml-lista { list-style:none; padding:0; margin:6px 0 0; }
+#modale-liv .ml-lista li { padding:4px 0; font-size:14px; }
+#modale-liv .ml-cont { font-size:12px; color:var(--muted); margin-top:6px; }
+#modale-liv .ml-comandi { display:flex; gap:8px; justify-content:flex-end; margin-top:16px; flex-wrap:wrap; }
+#modale-liv .ml-errore { color:#a12b2b; font-size:13px; margin-top:8px; }
 @media print { header, .riga-bt, .bt, .banco { display:none !important; } body { background:#fff; } }
 </style>
 </head>
@@ -223,6 +239,7 @@ body.fs-attiva { overflow:hidden; }
   <div class="dp-avviso" id="dp-avviso" hidden></div>
   <div class="dp-corpo" id="dp-corpo"></div>
 </div>
+<div id="modale-liv" class="nascosto"></div>
 
 <script type="module">
 import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm';
@@ -1049,6 +1066,7 @@ function baseRecord(pg) {
     slot: pg.incantesimi ? JSON.parse(JSON.stringify(pg.incantesimi.slot)) : {},
     slotMax: pg.incantesimi ? JSON.parse(JSON.stringify(pg.incantesimi.slot)) : {},
     richiestaLivello: null,
+    sbloccati: [],
     inventario: (statoInventarioIniziale(pg)),
     monete: Object.assign({ MR: 0, MA: 0, ME: 0, MP: 0, MO: 0 }, pg.monete),
     stati: [],
@@ -1071,6 +1089,7 @@ function unisci(base, remoto) {
   r.slot = Object.assign({}, base.slot, (remoto && remoto.slot) || {});
   r.slotMax = Object.assign({}, base.slotMax, (remoto && remoto.slotMax) || {});
   r.richiestaLivello = (remoto && remoto.richiestaLivello) || null;
+  r.sbloccati = Array.isArray(remoto && remoto.sbloccati) ? remoto.sbloccati : (base.sbloccati || []);
   return r;
 }
 
@@ -1403,6 +1422,9 @@ function renderExtra() {
   });
   h += '</div>';
 
+  /* --- Sbloccati con il level up --- */
+  h += renderSbloccati();
+
   /* --- Altre competenze --- */
   h += '<div class="card"><h2>Altre competenze &amp; linguaggi</h2>';
   h += '<div class="priv"><b>Competenze.</b><p>' + esc(pg.competenze) + '</p></div>';
@@ -1488,6 +1510,185 @@ const LIVELLO_INFO = {
   }
 };
 
+/* Scelte di incantesimi previste per classe e livello: al momento del level up il
+   giocatore le effettua direttamente dalla propria scheda. */
+const SCELTE_LIVELLO = {
+  'Chierico nano (soldato)': {
+    3: { chiave: 'inc2', multi: true, cap: 3,
+      nota: 'Ora prepari incantesimi di 2\u00b0 livello. Scegli fino a 3 incantesimi (limite pari al modificatore di Saggezza). Gli incantesimi di dominio \u2014 ristorare inferiore e arma spirituale \u2014 sono gi\u00e0 preparati automaticamente.',
+      esclusi: ['Arma Spirituale', 'Ristorare Inferiore'],
+      lista: ['Aiuto', 'Arma Spirituale', 'Blocca Persone', 'Preghiera di Guarigione', 'Presagio', 'Ristorare Inferiore', 'Silenzio', 'Vincolo di Interdizione'] },
+    4: { chiave: 'trucchetto', multi: false, cap: 1,
+      nota: 'Apprendi un nuovo trucchetto da chierico, scelto fra quelli non ancora conosciuti.',
+      lista: ['Guida', 'Resistenza'] },
+    5: { chiave: 'inc3', multi: true, cap: 4,
+      nota: 'Ora prepari incantesimi di 3\u00b0 livello. Scegli fino a 4 incantesimi (limite pari al modificatore di Saggezza). Gli incantesimi di dominio \u2014 faro di speranza e rinascita \u2014 sono gi\u00e0 preparati automaticamente.',
+      esclusi: ['Faro di Speranza', 'Rinascita'],
+      lista: ['Dissolvi Magie', 'Faro di Speranza', 'Guardiani Spirituali', 'Parola Guaritrice di Massa', "Protezione dall'Energia", 'Rinascita'] }
+  },
+  'Mago elfo (accolito)': {
+    3: { chiave: 'inc2', multi: true, cap: 2,
+      nota: 'Aggiungi 2 incantesimi di 2\u00b0 livello al tuo libro degli incantesimi.',
+      lista: ['Blocca Persone', 'Invisibilit\u00e0', 'Movimenti del Ragno', 'Oscurit\u00e0', 'Passo Velato', 'Ragnatela', 'Sfera Infuocata', 'Sfocatura', 'Suggestione'] },
+    4: { chiave: 'trucchetto', multi: false, cap: 1,
+      nota: 'Apprendi un nuovo trucchetto da mago, scelto fra quelli non ancora conosciuti.',
+      lista: ['Luce', 'Luci Danzanti'] },
+    5: { chiave: 'inc3', multi: true, cap: 2,
+      nota: 'Aggiungi 2 incantesimi di 3\u00b0 livello al tuo libro degli incantesimi.',
+      lista: ['Dissolvi Magie', 'Fulmine', 'Palla di Fuoco', "Protezione dall'Energia", 'Volare'] }
+  }
+};
+
+/* Media del dado vita arrotondata per eccesso (Reg. p. 15): d10 -> 6, d8 -> 5, d6 -> 4. */
+function mediaDado(lato) { return Math.floor(lato / 2) + 1; }
+
+/* ===================== Finestra delle scelte di level up =====================
+   Il giocatore sceglie se tirare il dado vita o usare la media arrotondata per eccesso
+   e, quando previsti, gli incantesimi da apprendere. Le scelte vengono inviate al Master
+   con la richiesta di aumento di livello. */
+let mlStato = null;   // { nuovo, lato, modCos, cfg, modo, valore }
+
+function apriModaleLivello() {
+  const lv = livelloAttuale();
+  if (lv >= SOGLIE_PE.length || (Number(stato.pe) || 0) < SOGLIE_PE[lv]) return;
+  const nuovo = lv + 1;
+  const lato = corrente.dadoLato || 8;
+  const modCos = mod(carAttuali().COS);
+  const cfg = (SCELTE_LIVELLO[corrente.nome] || {})[nuovo] || null;
+  mlStato = { nuovo: nuovo, lato: lato, modCos: modCos, cfg: cfg, modo: null, valore: 0 };
+  const el = document.getElementById('modale-liv');
+  let h = '<div class="ml-box">';
+  h += '<h3>' + esc(nomeAttuale()) + ' &middot; ' + nuovo + '\u00b0 livello</h3>';
+  h += '<p class="ml-nota">Guadagno di PF massimi = risultato del dado vita + modificatore di '
+    + 'Costituzione (' + segno(modCos) + '); l\u2019aggiunta del modificatore \u00e8 automatica.</p>';
+  h += '<h4>Dado vita (d' + lato + ')</h4>';
+  h += '<div class="riga-bt"><button type="button" class="bt" data-ml="tiro">Tira il d' + lato + '</button>';
+  h += '<button type="button" class="bt" data-ml="media">Usa la media (' + mediaDado(lato) + ')</button></div>';
+  h += '<div class="ml-esito" id="ml-esito"></div>';
+  if (cfg) {
+    h += '<h4>Incantesimi da scegliere</h4>';
+    h += '<p class="ml-nota">' + esc(cfg.nota || '') + '</p>';
+    const esclusi = cfg.esclusi || [];
+    const opz = cfg.lista.filter(function (n) { return esclusi.indexOf(n) < 0; });
+    const tipo = cfg.multi ? 'checkbox' : 'radio';
+    h += '<ul class="ml-lista">';
+    opz.forEach(function (n) {
+      h += '<li><label><input type="' + tipo + '" name="ml-sc" value="' + esc(n) + '"> ' + esc(n) + '</label></li>';
+    });
+    h += '</ul>';
+    h += '<p class="ml-cont">Selezionati <span id="ml-cont">0</span> / ' + cfg.cap + '</p>';
+  }
+  h += '<div class="ml-errore" id="ml-err" hidden></div>';
+  h += '<div class="ml-comandi">';
+  h += '<button type="button" class="bt" data-ml="annulla">Annulla</button>';
+  h += '<button type="button" class="bt primario" data-ml="conferma">Invia la richiesta al Master</button>';
+  h += '</div></div>';
+  el.innerHTML = h;
+  el.classList.remove('nascosto');
+  const inputs = Array.prototype.slice.call(el.querySelectorAll('input[name="ml-sc"]'));
+  inputs.forEach(function (i) {
+    i.addEventListener('change', function () {
+      const n = inputs.filter(function (x) { return x.checked; }).length;
+      const c = document.getElementById('ml-cont');
+      if (c) c.textContent = n;
+    });
+  });
+}
+
+function chiudiModaleLivello() {
+  const el = document.getElementById('modale-liv');
+  if (el) { el.classList.add('nascosto'); el.innerHTML = ''; }
+  mlStato = null;
+}
+
+function mlMostraEsito() {
+  if (!mlStato) return;
+  const g = mlStato.valore + mlStato.modCos;
+  const e = document.getElementById('ml-esito');
+  if (e) e.textContent = (mlStato.modo === 'media' ? 'Hai scelto la media: ' : 'Hai tirato ') + mlStato.valore
+    + ' ' + segno(mlStato.modCos) + ' = +' + g + ' PF massimi.';
+}
+
+function mlConferma() {
+  if (!mlStato) return;
+  const el = document.getElementById('modale-liv');
+  const err = document.getElementById('ml-err');
+  function errore(msg) { if (err) { err.textContent = msg; err.hidden = false; } }
+  if (err) err.hidden = true;
+  if (!mlStato.modo) { errore('Scegli il dado vita: tira il dado oppure usa la media.'); return; }
+  const scelte = {};
+  if (mlStato.cfg) {
+    const sel = Array.prototype.slice.call(el.querySelectorAll('input[name="ml-sc"]'))
+      .filter(function (x) { return x.checked; }).map(function (x) { return x.value; });
+    if (!sel.length) { errore('Seleziona almeno un incantesimo.'); return; }
+    if (sel.length > mlStato.cfg.cap) { errore('Puoi selezionare al massimo ' + mlStato.cfg.cap + ' incantesimi.'); return; }
+    scelte[mlStato.cfg.chiave] = sel;
+  }
+  const nuovo = mlStato.nuovo;
+  const modo = mlStato.modo;
+  const valore = mlStato.valore;
+  const lato = mlStato.lato;
+  stato.richiestaLivello = {
+    livello: nuovo,
+    ts: Date.now(),
+    dadoVita: { modo: modo, valore: valore, dado: lato },
+    scelte: scelte
+  };
+  registraTiro('Dado vita (' + nuovo + '\u00b0 livello): ' + (modo === 'media' ? 'media ' : 'd' + lato + ' = ') + valore);
+  chiudiModaleLivello();
+  aggiornaLivello();
+  pubblica();
+}
+
+/* Privilegi e incantesimi sbloccati col level up (inviati dal Master); in mancanza
+   si ripiega sull'elenco locale dei privilegi noti. */
+function sbloccatiAttuali() {
+  if (Array.isArray(stato.sbloccati) && stato.sbloccati.length) return stato.sbloccati;
+  const out = [];
+  const lv = livelloAttuale();
+  const info = LIVELLO_INFO[corrente.nome] || {};
+  for (let i = 2; i <= lv; i++) {
+    if (info[i]) out.push({ livello: i, privilegi: [{ nome: '', testo: info[i] }], incantesimi: [] });
+  }
+  return out;
+}
+
+function renderSbloccati() {
+  const lista = sbloccatiAttuali();
+  let h = '<div class="card"><h2>Sbloccati con il level up</h2>';
+  if (!lista.length) {
+    h += '<p class="nota-piccola">Non hai ancora sbloccato privilegi o incantesimi con '
+      + 'l\u2019aumento di livello.</p></div>';
+    return h;
+  }
+  const inc = corrente.incantesimi;
+  lista.forEach(function (l) {
+    h += '<div class="inc-card"><div style="font-weight:600;color:#2f6f8f;margin-bottom:4px">'
+      + l.livello + '\u00b0 livello</div>';
+    (l.privilegi || []).forEach(function (p) {
+      h += '<div class="priv">' + (p.nome ? '<b>' + esc(p.nome) + '.</b> ' : '') + '<span>' + esc(p.testo) + '</span></div>';
+    });
+    if (l.incantesimi && l.incantesimi.length) {
+      h += '<div class="nota-piccola" style="margin-top:6px">Incantesimi appresi:</div>';
+      l.incantesimi.forEach(function (nome) {
+        const tiro = inc && inc.tiri && inc.tiri[nome];
+        const tt = inc && inc.tiriTrucchetti && inc.tiriTrucchetti[nome];
+        const dado = tiro || (tt ? tt.danno : null);
+        const desc = inc && inc.descrizioni && inc.descrizioni[nome];
+        h += '<div class="inc-riga"><span class="inc-nome">' + esc(nome) + '</span>';
+        if (dado) h += '<button class="bt" data-tira-danno="' + esc(dado) + '" data-etichetta="' + esc(nome) + '">Tira ' + esc(dado) + '</button>';
+        if (desc) h += '<button class="bt" data-desc="' + esc(nome) + '">Descrizione</button>';
+        if (!dado && !desc) h += '<span class="inc-nd">come da manuale</span>';
+        h += '</div>';
+        if (desc) h += '<div class="d' + (descAperte[nome] ? '' : ' nascosto') + '" data-desc-corpo="' + esc(nome) + '" style="margin-top:6px">' + esc(desc) + '</div>';
+      });
+    }
+    h += '</div>';
+  });
+  h += '</div>';
+  return h;
+}
+
 function livelloVisti() {
   try { return JSON.parse(localStorage.getItem(CHIAVE_LIVELLO_VISTO)) || {}; }
   catch (e) { return {}; }
@@ -1545,6 +1746,21 @@ function render() { renderScheda(); renderColpire(); renderExtra(); aggiornaLive
 document.addEventListener('click', function (e) {
   const t = e.target;
   if (!t.closest) return;
+
+  /* finestra delle scelte di level up */
+  if (t.id === 'modale-liv') { chiudiModaleLivello(); return; }
+  const ml = t.closest('[data-ml]');
+  if (ml) {
+    const a = ml.getAttribute('data-ml');
+    if (a === 'annulla') { chiudiModaleLivello(); return; }
+    if (a === 'conferma') { mlConferma(); return; }
+    if (mlStato) {
+      if (a === 'media') { mlStato.modo = 'media'; mlStato.valore = mediaDado(mlStato.lato); }
+      else if (a === 'tiro') { mlStato.modo = 'tiro'; mlStato.valore = 1 + Math.floor(Math.random() * mlStato.lato); }
+      mlMostraEsito();
+    }
+    return;
+  }
 
   const adj = t.closest('[data-adj]');
   if (adj) {
@@ -1817,13 +2033,7 @@ window.addEventListener('beforeunload', function () { if (pronto) pubblica(); })
 dpToggle.addEventListener('click', dpCicla);
 
 /* barra aumento di livello: richiesta al Master e chiusura del promemoria */
-document.getElementById('bl-btn').addEventListener('click', function () {
-  const lv = livelloAttuale();
-  if (lv >= SOGLIE_PE.length || (Number(stato.pe) || 0) < SOGLIE_PE[lv]) return;
-  stato.richiestaLivello = { livello: lv + 1, ts: Date.now() };
-  aggiornaLivello();
-  pubblica();
-});
+document.getElementById('bl-btn').addEventListener('click', apriModaleLivello);
 document.getElementById('nl-chiudi').addEventListener('click', function () {
   document.getElementById('nota-livello').hidden = true;
   dpAggiornaAltezzaHeader();
