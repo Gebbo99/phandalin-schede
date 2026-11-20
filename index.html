@@ -219,6 +219,7 @@ body.fs-attiva { overflow:hidden; }
       <div class="foglio" id="foglio"></div>
       <button type="button" class="bt fs-esci" data-az="fs-esci" hidden>Esci</button>
     </div>
+    <div id="sbloccati-host"></div>
     <div class="banco2">
       <button class="bt" data-az="riposo">Riposo lungo</button>
     </div>
@@ -232,7 +233,7 @@ body.fs-attiva { overflow:hidden; }
 </main>
 <div id="dadi-pannello" class="minimo">
   <div class="dp-testa">
-    <span class="titolo">Tiri di dado <span id="dp-conteggio"></span></span>
+    <span class="titolo">Tiri di dado<span id="dp-nome"></span> <span id="dp-conteggio"></span></span>
     <button type="button" id="dp-svuota" title="Svuota lo storico dei tiri">Svuota</button>
     <button type="button" id="dp-toggle" title="Mostra / nascondi lo storico">&#9662;</button>
   </div>
@@ -950,14 +951,19 @@ function dpOra(ts) {
   function due(n) { return (n < 10 ? '0' : '') + n; }
   return due(d.getHours()) + ':' + due(d.getMinutes()) + ':' + due(d.getSeconds());
 }
+/* Lo storico dei tiri \u00e8 personale: ogni personaggio ha la sua chiave in localStorage,
+   cos\u00ec cambiando scheda non si vedono i tiri degli altri. */
+function dpChiave() { return DP_CHIAVE + ':' + ((corrente && corrente.id) || 'x'); }
 function dpCarica() {
-  try { const raw = localStorage.getItem(DP_CHIAVE); const v = raw ? JSON.parse(raw) : []; dpStorico = Array.isArray(v) ? v : []; }
+  try { const raw = localStorage.getItem(dpChiave()); const v = raw ? JSON.parse(raw) : []; dpStorico = Array.isArray(v) ? v : []; }
   catch (e) { dpStorico = []; }
 }
 function dpSalva() {
-  try { localStorage.setItem(DP_CHIAVE, JSON.stringify(dpStorico.slice(0, DP_MAX))); } catch (e) {}
+  try { localStorage.setItem(dpChiave(), JSON.stringify(dpStorico.slice(0, DP_MAX))); } catch (e) {}
 }
 function dpDisegna() {
+  const nm = document.getElementById('dp-nome');
+  if (nm) nm.textContent = ' \u00b7 ' + nomeAttuale();
   dpConteggio.textContent = dpStorico.length ? '(' + dpStorico.length + ')' : '';
   if (!dpStorico.length) { dpCorpo.innerHTML = '<div class="dp-vuoto">Nessun tiro ancora.</div>'; return; }
   dpCorpo.innerHTML = dpStorico.map(function (t, i) {
@@ -1378,12 +1384,12 @@ function renderExtra() {
     } else if (inc.preparati.length) {
       h += '<div class="d">Incantesimi preparati: ' + inc.preparati.map(esc).join(', ') + '</div>';
     }
-    h += '<div class="d" style="margin-top:8px">Slot disponibili:</div>';
+    h += '<div class="d" style="margin-top:8px">Slot disponibili per livello (toccando i pallini si segnano gli slot spesi):</div>';
     const slotMax = slotMaxAttuali();
-    Object.keys(slotMax).forEach(function (lv) {
+    Object.keys(slotMax).sort(function (a, b) { return Number(a) - Number(b); }).forEach(function (lv) {
       const max = slotMax[lv];
       const usati = Number(stato.slot[lv]) || 0;
-      h += '<div class="slot"><span style="font-size:13px;min-width:70px">' + lv + '\u00b0 livello</span>';
+      h += '<div class="slot"><span style="font-size:13px;font-weight:600;min-width:120px">Slot di ' + lv + '\u00b0 livello</span>';
       for (let i = 0; i < max; i++) h += '<span class="pip' + (i < usati ? ' speso' : '') + '" data-slot="' + lv + '" data-i="' + i + '"></span>';
       h += '<span style="font-size:12px;color:#5b6570">' + (max - usati) + '/' + max + ' disponibili</span></div>';
     });
@@ -1421,9 +1427,6 @@ function renderExtra() {
     h += '<div class="priv"><b>' + esc(p.nome) + '.</b><p>' + esc(p.testo) + '</p></div>';
   });
   h += '</div>';
-
-  /* --- Sbloccati con il level up --- */
-  h += renderSbloccati();
 
   /* --- Altre competenze --- */
   h += '<div class="card"><h2>Altre competenze &amp; linguaggi</h2>';
@@ -1542,6 +1545,25 @@ const SCELTE_LIVELLO = {
 /* Media del dado vita arrotondata per eccesso (Reg. p. 15): d10 -> 6, d8 -> 5, d6 -> 4. */
 function mediaDado(lato) { return Math.floor(lato / 2) + 1; }
 
+/* Slot incantesimo di un incantatore a pieno lancio (chierico e mago), per livello.
+   Al 3° livello si sbloccano gli slot di 2° livello: vanno tenuti distinti per tipo. */
+const SLOT_LIVELLO_LOCALE = {
+  1: { 1: 2 }, 2: { 1: 3 }, 3: { 1: 4, 2: 2 }, 4: { 1: 4, 2: 3 }, 5: { 1: 4, 2: 3, 3: 2 }
+};
+function slotTesto(liv) {
+  const s = SLOT_LIVELLO_LOCALE[liv];
+  if (!s) return '';
+  return Object.keys(s).map(function (k) { return s[k] + ' di ' + k + '\u00b0 livello'; }).join(' + ');
+}
+/* Riga con gli slot guadagnati a un livello, mostrata solo se cambiano rispetto al precedente. */
+function slotLivelloHTML(liv) {
+  const cur = SLOT_LIVELLO_LOCALE[liv];
+  if (!cur) return '';
+  const prec = SLOT_LIVELLO_LOCALE[liv - 1];
+  if (prec && slotTesto(liv) === slotTesto(liv - 1)) return '';
+  return '<div class="nota-piccola" style="margin:2px 0 4px">Slot incantesimo: <b>' + slotTesto(liv) + '</b></div>';
+}
+
 /* ===================== Finestra delle scelte di level up =====================
    Il giocatore sceglie se tirare il dado vita o usare la media arrotondata per eccesso
    e, quando previsti, gli incantesimi da apprendere. Le scelte vengono inviate al Master
@@ -1555,15 +1577,19 @@ function apriModaleLivello() {
   const lato = corrente.dadoLato || 8;
   const modCos = mod(carAttuali().COS);
   const cfg = (SCELTE_LIVELLO[corrente.nome] || {})[nuovo] || null;
-  mlStato = { nuovo: nuovo, lato: lato, modCos: modCos, cfg: cfg, modo: null, valore: 0 };
+  mlStato = { nuovo: nuovo, lato: lato, modCos: modCos, cfg: cfg, modo: null, valore: 0, tiroFatto: false };
   const el = document.getElementById('modale-liv');
   let h = '<div class="ml-box">';
   h += '<h3>' + esc(nomeAttuale()) + ' &middot; ' + nuovo + '\u00b0 livello</h3>';
   h += '<p class="ml-nota">Guadagno di PF massimi = risultato del dado vita + modificatore di '
     + 'Costituzione (' + segno(modCos) + '); l\u2019aggiunta del modificatore \u00e8 automatica.</p>';
   h += '<h4>Dado vita (d' + lato + ')</h4>';
-  h += '<div class="riga-bt"><button type="button" class="bt" data-ml="tiro">Tira il d' + lato + '</button>';
+  h += '<p class="ml-nota">Scegli il dado vita: puoi tirare il d' + lato + ' <b>una sola volta</b>, '
+    + 'oppure usare la media arrotondata per eccesso, oppure inserire a mano il valore uscito dal dado fisico.</p>';
+  h += '<div class="riga-bt"><button type="button" class="bt" id="ml-tiro" data-ml="tiro">Tira il d' + lato + '</button>';
   h += '<button type="button" class="bt" data-ml="media">Usa la media (' + mediaDado(lato) + ')</button></div>';
+  h += '<div class="riga-bt" style="margin-top:6px"><input type="number" inputmode="numeric" id="ml-manuale" min="1" max="' + lato + '" placeholder="1-' + lato + '" style="width:90px">';
+  h += '<button type="button" class="bt" data-ml="manuale">Usa il valore inserito</button></div>';
   h += '<div class="ml-esito" id="ml-esito"></div>';
   if (cfg) {
     h += '<h4>Incantesimi da scegliere</h4>';
@@ -1602,11 +1628,12 @@ function chiudiModaleLivello() {
 }
 
 function mlMostraEsito() {
-  if (!mlStato) return;
+  if (!mlStato || !mlStato.modo) return;
   const g = mlStato.valore + mlStato.modCos;
   const e = document.getElementById('ml-esito');
-  if (e) e.textContent = (mlStato.modo === 'media' ? 'Hai scelto la media: ' : 'Hai tirato ') + mlStato.valore
-    + ' ' + segno(mlStato.modCos) + ' = +' + g + ' PF massimi.';
+  const pref = mlStato.modo === 'media' ? 'Media arrotondata per eccesso: '
+    : (mlStato.modo === 'manuale' ? 'Valore inserito: ' : 'Hai tirato ');
+  if (e) e.textContent = pref + mlStato.valore + ' ' + segno(mlStato.modCos) + ' = +' + g + ' PF massimi.';
 }
 
 function mlConferma() {
@@ -1615,7 +1642,15 @@ function mlConferma() {
   const err = document.getElementById('ml-err');
   function errore(msg) { if (err) { err.textContent = msg; err.hidden = false; } }
   if (err) err.hidden = true;
-  if (!mlStato.modo) { errore('Scegli il dado vita: tira il dado oppure usa la media.'); return; }
+  /* il valore pu\u00f2 essere stato inserito a mano senza premere il pulsante dedicato */
+  let modo = mlStato.modo;
+  let valore = mlStato.valore;
+  if (!modo) {
+    const inp = document.getElementById('ml-manuale');
+    const v = inp ? Math.round(Number(inp.value)) : NaN;
+    if (v >= 1) { modo = 'manuale'; valore = Math.max(1, Math.min(mlStato.lato, v)); }
+  }
+  if (!modo) { errore('Scegli il dado vita: tira il dado, usa la media oppure inserisci il valore.'); return; }
   const scelte = {};
   if (mlStato.cfg) {
     const sel = Array.prototype.slice.call(el.querySelectorAll('input[name="ml-sc"]'))
@@ -1625,8 +1660,6 @@ function mlConferma() {
     scelte[mlStato.cfg.chiave] = sel;
   }
   const nuovo = mlStato.nuovo;
-  const modo = mlStato.modo;
-  const valore = mlStato.valore;
   const lato = mlStato.lato;
   stato.richiestaLivello = {
     livello: nuovo,
@@ -1634,7 +1667,9 @@ function mlConferma() {
     dadoVita: { modo: modo, valore: valore, dado: lato },
     scelte: scelte
   };
-  registraTiro('Dado vita (' + nuovo + '\u00b0 livello): ' + (modo === 'media' ? 'media ' : 'd' + lato + ' = ') + valore);
+  const descTiro = modo === 'media' ? 'media ' + valore
+    : (modo === 'manuale' ? 'inserito ' + valore : 'd' + lato + ' = ' + valore);
+  registraTiro('Dado vita (' + nuovo + '\u00b0 livello): ' + descTiro);
   chiudiModaleLivello();
   aggiornaLivello();
   pubblica();
@@ -1655,7 +1690,7 @@ function sbloccatiAttuali() {
 
 function renderSbloccati() {
   const lista = sbloccatiAttuali();
-  let h = '<div class="card"><h2>Sbloccati con il level up</h2>';
+  let h = '<div class="card" style="margin-top:12px"><h2>Sbloccati con il level up</h2>';
   if (!lista.length) {
     h += '<p class="nota-piccola">Non hai ancora sbloccato privilegi o incantesimi con '
       + 'l\u2019aumento di livello.</p></div>';
@@ -1665,6 +1700,8 @@ function renderSbloccati() {
   lista.forEach(function (l) {
     h += '<div class="inc-card"><div style="font-weight:600;color:#2f6f8f;margin-bottom:4px">'
       + l.livello + '\u00b0 livello</div>';
+    /* slot incantesimo guadagnati a questo livello (con distinzione per tipo) */
+    if (inc) h += slotLivelloHTML(l.livello);
     (l.privilegi || []).forEach(function (p) {
       h += '<div class="priv">' + (p.nome ? '<b>' + esc(p.nome) + '.</b> ' : '') + '<span>' + esc(p.testo) + '</span></div>';
     });
@@ -1739,7 +1776,13 @@ function aggiornaLivello() {
   dpAggiornaAltezzaHeader();
 }
 
-function render() { renderScheda(); renderColpire(); renderExtra(); aggiornaLivello(); }
+function aggiornaSbloccati() {
+  const el = document.getElementById('sbloccati-host');
+  if (!el) return;
+  el.innerHTML = sbloccatiAttuali().length ? renderSbloccati() : '';
+}
+
+function render() { renderScheda(); renderColpire(); renderExtra(); aggiornaLivello(); aggiornaSbloccati(); }
 
 /* ===================== Interazione ===================== */
 /* Listener sul documento: le tab stanno nell'header, fuori da #contenuto. */
@@ -1754,9 +1797,28 @@ document.addEventListener('click', function (e) {
     const a = ml.getAttribute('data-ml');
     if (a === 'annulla') { chiudiModaleLivello(); return; }
     if (a === 'conferma') { mlConferma(); return; }
+    const errEl = document.getElementById('ml-err');
     if (mlStato) {
-      if (a === 'media') { mlStato.modo = 'media'; mlStato.valore = mediaDado(mlStato.lato); }
-      else if (a === 'tiro') { mlStato.modo = 'tiro'; mlStato.valore = 1 + Math.floor(Math.random() * mlStato.lato); }
+      if (a === 'tiro') {
+        /* il dado vita si tira una sola volta: dopo il tiro il pulsante resta bloccato */
+        if (!mlStato.tiroFatto) {
+          mlStato.tiroFatto = true;
+          mlStato.modo = 'tiro';
+          mlStato.valore = 1 + Math.floor(Math.random() * mlStato.lato);
+          const bt = document.getElementById('ml-tiro');
+          if (bt) { bt.disabled = true; bt.textContent = 'd' + mlStato.lato + ' tirato = ' + mlStato.valore; }
+        }
+      } else if (a === 'media') {
+        mlStato.modo = 'media';
+        mlStato.valore = mediaDado(mlStato.lato);
+      } else if (a === 'manuale') {
+        const inp = document.getElementById('ml-manuale');
+        const v = inp ? Math.round(Number(inp.value)) : NaN;
+        if (!(v >= 1)) { if (errEl) { errEl.textContent = 'Inserisci un valore fra 1 e ' + mlStato.lato + '.'; errEl.hidden = false; } return; }
+        if (errEl) errEl.hidden = true;
+        mlStato.modo = 'manuale';
+        mlStato.valore = Math.max(1, Math.min(mlStato.lato, v));
+      }
       mlMostraEsito();
     }
     return;
@@ -1872,7 +1934,7 @@ document.addEventListener('click', function (e) {
   if (dc) {
     const nome = dc.getAttribute('data-desc');
     descAperte[nome] = !descAperte[nome];
-    renderExtra();
+    renderExtra(); aggiornaSbloccati();
     return;
   }
   const tc = t.closest('[data-tira-car]');
@@ -1949,6 +2011,7 @@ function seleziona(idx) {
   selPg.value = String(idx);
   const base = baseRecord(corrente);
   stato = unisci(base, cache[corrente.id] || null);
+  dpCarica(); dpDisegna();
   render();
 }
 
